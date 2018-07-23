@@ -1,0 +1,30 @@
+{
+  "name": "scheduler-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "babel": "mkdir -p build && babel server.js -o build/main.bundle.js",
+    "lint": "eslint --fix *.js",
+    "start": "babel-node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ekmaus19/scheduler-bot.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ekmaus19/scheduler-bot/issues"
+  },
+  "homepage": "https://github.com/ekmaus19/scheduler-bot#readme",
+  "devDependencies": {
+    "babel-cli": "^6.26.0",
+    "babel-preset-env": "^1.7.0",
+    "eslint": "^5.2.0"
+  },
+  "dependencies": {
+    "googleapis": "^27.0.0"
+  }
+}
