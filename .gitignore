@@ -4,11 +4,9 @@ logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-<<<<<<< HEAD
 env.sh
 token.json
 =======
->>>>>>> parent of f3291a8... Google API Setup
 
 # Runtime data
 pids
