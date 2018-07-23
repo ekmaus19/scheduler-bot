@@ -28,14 +28,5 @@
     "dialogflow": "^0.6.0",
     "googleapis": "^27.0.0"
   },
-  "presets": [
-    [
-      "env",
-      {
-        "targets": {
-          "node": "current"
-        }
-      }
-    ]
-  ]
+  "presets": [["env", {"targets": {"node": "current"}}]]
 }
