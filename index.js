@@ -3,12 +3,6 @@ const fs = require('fs');
 const readline = require('readline');
 const {google} = require('googleapis');
 const dialogflow = require('dialogflow');
-const express = require('express');
-const path = require('path');
-const app = express();
-
-app.use(express.static(path.join(__dirname, 'build')));
-
 
 // If modifying these scopes, delete credentials.json.
 const SCOPES = ["https://www.googleapis.com/auth/calendar",
@@ -26,7 +20,13 @@ const rtm = new RTMClient(token)
 
 // Express Setup --------------------------------------------------------
 const express = require('express');
+const path = require('path');
 const app = express();
+const bodyParser = require('body-parser');
+
+app.use(bodyParser.urlencoded({ extended: false}));
+app.use(bodyParser.json());
+
 
 // DialogFlow Setup ----------------------------------------------------------------
 const Storage = require('@google-cloud/storage');
@@ -39,71 +39,59 @@ const storage = new Storage();
 //---------------------------------------- End of all Setup ----------------------------
 // Global variables
 let EVENTTOCREATE = {};
+let CONFIRMED = false;
 
 
+// ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
 
-let request;
-
+let answer;
 rtm.on('message', (message) => {
-  console.log(message);
   if ( (message.subtype && message.subtype === 'bot_message') ||
      (!message.subtype && message.user === rtm.activeUserId) ) {
        return;
      }
-  request = userRequest(message.text)
-    web.chat.postMessage({
-    channel: message.channel,
-    text: `${request.eventSend.confirmation}, Please confirm!`,
-    attachments: [
-        {
-            "fallback": "You are unable to confirm",
-            "callback_id": "wopr_game",
-            "color": "#3AA3E3",
-            "attachment_type": "default",
-            "actions": [
-                {
-                    "name": "response",
-                    "text": "Yes",
-                    "type": "button",
-                    "value": "true",
-                    "style": "primary",
-                },
-                {
-                    "name": "response",
-                    "text": "No",
-                    "type": "button",
-                    "value": "false",
-                    "style": "danger",
-                }
-            ]
-        }
-    ]
-})
-    .then((msg) => console.log('Message sent to channel'))
-    .catch(console.error)
-})
 
+     if (!CONFIRMED) {
 
-app.post('/oauth', (req, res) => {
-  if (req.payload.actions[0].value === true){
-    // T runs the google calendar stuff here
+       // Send Confirmation Response to request
+         userRequest(message.text)
+           .then(answer => {
+              web.chat.postMessage({
+               channel: message.channel,
+               text: `${answer.eventSend.confirmation}, Please confirm!`,
+               attachments: [
+                   {
+                       "fallback": "You are unable to confirm",
+                       "callback_id": "wopr_game",
+                       "color": "#3AA3E3",
+                       "attachment_type": "default",
+                       "actions": [
+                           {
+                               "name": "response",
+                               "text": "Yes",
+                               "type": "button",
+                               "value": "true",
+                               "style": "primary",
+                           },
+                           {
+                               "name": "response",
+                               "text": "No",
+                               "type": "button",
+                               "value": "false",
+                               "style": "danger",
+                           }
+                       ]
+                   }
+               ]
+           })
 
-
-    // Sending Data to Google Calendar -------------------------------------
-
-    fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
-      if (err) return console.log("Error loading client secret file:", err);
-      // Authorize a client with credentials, then call the Google Calendar API.
-      authorize(JSON.parse(content), createEvent);
-    });
-
-    // End of sending data to google calendar -------------------------------
-
-    res.send({message: 'scheduled!'})
-  } else {
-    res.send({message: 'canceled scheuling'})
-  }
+           EVENTTOCREATE = answer.confirmedMessage;
+           CONFIRMED = true;
+         })
+           .then(() => console.log('Message sent to channel'))
+           .catch(console.error)
+     }
 })
 
 //--------------------------------------------------------------  Google Calendar API Functions ----------------------------------------------------------------
@@ -142,7 +130,7 @@ function authorize(credentials, callback) {
  */
 function getAccessToken(oAuth2Client, callback) {
   const authUrl = oAuth2Client.generateAuthUrl({
-    access_type: 'offline' // Change to Online for auth without token,
+    access_type: 'offline', // Change to Online for auth without token,
     scope: SCOPES,
   });
 
@@ -203,7 +191,9 @@ function createEvent(auth) {
   const calendar = google.calendar({version: 'v3', auth});
 
   // eventSend.confirmedMessage should be formatted
-  calendar.events.insert(eventSend.confirmedMessage, (err, event) => {
+  calendar.events.insert({
+    'calendarId': 'primary',
+    resource: EVENTTOCREATE}, (err, event) => {
     if (err) return console.log('The API returned an error: ' + err)
     else console.log('Event Created:', event.summary);
   });
@@ -309,24 +299,57 @@ return  sessionClient
 
       // start and end dates for same day events
       var startDate = new Date(result.parameters.fields.date.stringValue)
-      var endDate = new Date(startDate.setDate(startDate.getDate() + 1))
+      var endDate = new Date((startDate.setDate(startDate.getDate() + 1)))
+
+      var month = endDate.getUTCMonth() + 1; //months from 1-12
+      var day = endDate.getUTCDate();
+      var year = endDate.getUTCFullYear();
+      endDate = year + "-" + month + "-" + day;
+
+      var startDate = new Date(result.parameters.fields.date.stringValue)
+      var month = startDate.getUTCMonth() + 1; //months from 1-12
+      var day = startDate.getUTCDate();
+      var year = startDate.getUTCFullYear();
+      startDate = year + "-" + month + "-" + day;
+
+      // start and end times for meetings
+      const startTime = new Date(result.parameters.fields.date.stringValue);
+      var endTime = new Date(result.parameters.fields.date.stringValue);
+      endTime.setMinutes(endTime.getMinutes() + 30);
 
 
       if (result.intent) {
         console.log(`  Intent: ${result.intent.displayName}`);
-        return resultObject = {
-          /////// to be sent to check in with user
-          eventSend: {confirmation: result.fulfillmentText},
-          /////// info for the calendar
-          confirmedMessage: {
-            start:{
-              date: result.parameters.fields.date.stringValue
-            },
-            end: {
-              date:endDate,
-            },
-            description: result.parameters.fields.subject.stringValue,
-            calendarId: "primary"
+
+        if (result.intent.displayName === 'reminder') {
+          return resultObject = {
+            /////// to be sent to check in with user
+            eventSend: {confirmation: result.fulfillmentText},
+            /////// info for the calendar
+            confirmedMessage: {
+              start:{
+                date: startDate,
+              },
+              end : {
+                date: endDate,
+              },
+              summary: result.parameters.fields.subject.stringValue,
+            }
+          }
+        } else if(result.intent.displayName === 'meeting') {
+          return resultObject = {
+            /////// to be sent to check in with user
+            eventSend: {confirmation: result.fulfillmentText},
+            /////// info for the calendar
+            confirmedMessage: {
+              start:{
+                dateTime: result.parameters.fields.date.stringValue,
+              },
+              end : {
+                dateTime: endTime,
+              },
+              summary: result.parameters.fields.subject.stringValue,
+            }
           }
         }
 
@@ -339,62 +362,29 @@ return  sessionClient
     });
 }
 
-const slack = require('@slack/client')
-const RTMClient = slack.RTMClient
-const WebClient = slack.WebClient
-const token = 'xoxb-402681346384-403536981733-kqaM0ezYN5OdLCXv1T8h6wlU'
-const web = new WebClient(token)
-const rtm = new RTMClient(token)
-rtm.start()
+// ---------------------------- Routes for communcation --------------------------------------------
+app.post('/oauth', (req, res) => {
+  const payload = JSON.parse(req.body.payload);
+  if (payload.actions[0].value === "true") {
+    // T runs the google calendar stuff here
 
-let answer;
-rtm.on('message', (message) => {
-  if ( (message.subtype && message.subtype === 'bot_message') ||
-     (!message.subtype && message.user === rtm.activeUserId) ) {
-       return;
-     }
+    // Sending Data to Google Calendar -------------------------------------
 
-  userRequest(message.text)
-    .then(answer => { web.chat.postMessage({
-        channel: message.channel,
-        text: `${answer.eventSend.confirmation}, Please confirm!`,
-        attachments: [
-            {
-                "fallback": "You are unable to confirm",
-                "callback_id": "wopr_game",
-                "color": "#3AA3E3",
-                "attachment_type": "default",
-                "actions": [
-                    {
-                        "name": "response",
-                        "text": "Yes",
-                        "type": "button",
-                        "value": "true",
-                        "style": "primary",
-                    },
-                    {
-                        "name": "response",
-                        "text": "No",
-                        "type": "button",
-                        "value": "false",
-                        "style": "danger",
-                    }
-                ]
-            }
-        ]
-    })})
-    .then(() => console.log('Message sent to channel'))
-    .catch(console.error)
+    fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
+      if (err) return console.log("Error loading client secret file:", err);
+      // Authorize a client with credentials, then call the Google Calendar API.
+      authorize(JSON.parse(content), createEvent)
+
+    });
+
+    // End of sending data to google calendar -------------------------------
+
+    CONFIRMED = false;
+    res.send('Scheduled!');
+  } else {
+    res.send({message: 'canceled scheduling'})
+  }
 })
-// app.post('/oauth', (req, res) => {
-//   if (req.payload.actions[0].value === true){
-//     console.log('heyyyy it worked!')
-//     // T runs the google calendar stuff here
-//     res.send({message: 'scheduled!'})
-//   } else {
-//     res.send({message: 'canceled scheuling'})
-//   }
-// })
 
-
-userRequest("schedule a meeting with nick at 3pm tomorrow to talk about coding")
+app.listen(1337);
+// userRequest("schedule a meeting with nick at 3pm tomorrow to talk about coding");
