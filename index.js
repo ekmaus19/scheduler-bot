@@ -218,45 +218,37 @@ function listAvailable(auth) {
   AVAILABLETIMES = [];
   const startDate = new Date();
   const endDate = new Date();
-  const times = [];
-  const asyncDone = false;
+  endDate.setDate(startDate.getDate() + 7);
   const calendar = google.calendar({version: 'v3', auth});
 
+  let times = [];
 
-  // Running through 7 days
-  for (let i = 0; i < 8; i++) {
-    calendar.events.list({
-      calendarId: "primary",
-      timeMin: startDate.toISOString(),
-      timeMax:  endDate.toISOString(),
-      maxResults: 3, // Max 3 Time Slots per day
-      singleEvents: true,
-      orderBy: "startTime",
-    }, (err, res) => {
-      if (err) {
-        ERROR = true;
-        return console.log("The API returned an error: " + err);
-      }
-      const events = res.data.items;
-      if (events.length) {
-        console.log('Available Times')
-        events.map((event) => {
-          const end = event.end.dateTime || event.end.date;
-          AVAILABLETIMES.push(end);
-        });
-        times.sort((a,b) => (new Date(a)) - (new Date(b)));
+  calendar.freebusy.query({
+    auth: auth,
+    resource: {
+      "timeMin": startDate.toISOString(),
+      "timeMax": endDate.toISOString(),
+      "items": [{"id": "primary"}]
+    }
+  }, (err, res) => {
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
+    const events = res.data.calendars.primary.busy;
 
-        if(i === 7) { // Return the list of times when after the last asycn call
-          console.log('Got Availale times');
-        }
-      } else {
-        console.log("No upcoming events found.");
-      }
-    });
-    startDate.setDate(startDate.getDate() + 1)
-    endDate.setDate(startDate.getDate() + 1);
-  }
+    // Make sure only three per day
+    let counter = 0;
+    let date = startDate;
+    if (events.length) {
+      events.map((event) => AVAILABLETIMES.push(event.end));
+      AVAILABLETIMES.sort((a,b) => (new Date(a)) - (new Date(b)));
+    } else {
+      console.log("No upcoming events found.");
+    }
+  });
 }
+
 
 function combined(auth){
 
@@ -496,13 +488,12 @@ app.post('/oauth', (req, res) => {
     fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
       if (err) return console.log("Error loading client secret file:", err);
       // Authorize a client with credentials, then call the Google Calendar API.
-      authorize(JSON.parse(content), createEvent)
+      authorize(JSON.parse(content), listAvailable)
 
     });
 
     // End of sending data to google calendar -------------------------------
 
-    CONFIRMED = false;
     if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
     else res.send('Scheduled!')
 
