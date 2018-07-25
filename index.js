@@ -44,6 +44,7 @@ let LISTEVENTSFROM = new Date();
 let EVENTSLIST = [];
 let AVAILABLETIMES = [];
 let ERROR = false;
+let FURTHERACTION = false;
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
@@ -200,7 +201,7 @@ function createEvent(auth) {
   const calendar = google.calendar({version: 'v3', auth});
 
   // eventSend.confirmedMessage should be formatted
-  console.log('Creating event ...', EVENTTOCREATE)
+
   calendar.events.insert({
     'calendarId': 'primary',
     resource: EVENTTOCREATE}, (err, event) => {
@@ -298,6 +299,8 @@ combined = async(auth) => {
 
       if (conflictCheck) {
 
+        FURTHERACTION = true;
+
         web.chat.postMessage({
             channel: 'DBWMAE72A',
             text: 'Sorry you have another event at that time. Would you like to pick from these times when you are free?',
@@ -316,7 +319,7 @@ combined = async(auth) => {
                             "type": "select",
                             "options": (AVAILABLETIMES.slice(0, 10)).map((time, i) => {
                               return {
-                                  "text": (new Date(time)).toString(),
+                                  "text": (new Date(time)).toLocaleString(),
                                   "value": i
                               }
                             })
@@ -457,8 +460,8 @@ return  sessionClient
 app.post('/oauth', (req, res) => {
   const payload = JSON.parse(req.body.payload);
 
-  // If User Says to confirm event
-  if (payload.actions[0].value === "true") {
+  // If User Says to confirm event request
+  if (payload.actions[0].name === 'response' && payload.actions[0].value === "true") {
 
     // Sending Data to Google Calendar -------------------------------------
 
@@ -473,9 +476,28 @@ app.post('/oauth', (req, res) => {
     // End of sending data to google calendar -------------------------------
 
     if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
-    else res.send('Scheduled!')
+    else if (!FURTHERACTION) res.send('Scheduled!')
 
-  } else {
+  } else if (payload.actions[0].name === 'available_times' && payload.actions[0].selected_options[0].value) {
+
+    // Set Event to new start and end time
+    EVENTTOCREATE.start.dateTime = AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]
+    let endTime = new Date(AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]);
+    endTime.setMinutes(endTime.getMinutes() + 30);
+    EVENTTOCREATE.end.dateTime = endTime;
+
+    fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
+      if (err) return console.log("Error loading client secret file:", err);
+
+      // Authorize a client with credentials, then call the Google Calendar API.
+      authorize(JSON.parse(content), createEvent);
+
+    });
+
+    if (ERROR) res.send('Sorry I could not set that meeting up, please try again');
+    else res.send('Meeting Scheduled');
+
+  }  else {
     res.send('Canceled')
   }
 })
