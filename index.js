@@ -40,17 +40,24 @@ const storage = new Storage();
 // Global variables
 let EVENTTOCREATE = {};
 let CONFIRMED = false;
-
+let LISTEVENTSFROM = new Date();
+let EVENTSLIST = [];
+let AVAILABLETIMES = [];
+let ERROR = false;
+let FURTHERACTION = false;
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
 
 let answer;
 rtm.on('message', (message) => {
+  CONFIRMED = false;
   if ( (message.subtype && message.subtype === 'bot_message') ||
      (!message.subtype && message.user === rtm.activeUserId) ) {
        return;
      }
+
+     console.log('channel', message.channel)
 
      if (!CONFIRMED) {
 
@@ -165,19 +172,22 @@ function listEvents(auth) {
   const calendar = google.calendar({version: "v3", auth});
   calendar.events.list({
     calendarId: "primary",
-    timeMin: (new Date()).toISOString(),
+    timeMin: LISTEVENTSFROM,
     maxResults: 10,
     singleEvents: true,
     orderBy: "startTime",
   }, (err, res) => {
-    if (err) return console.log("The API returned an error: " + err);
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
     const events = res.data.items;
     if (events.length) {
       events.map((event) => {
         const start = event.start.dateTime || event.start.date;
-        eventList.push(event);
+        EVENTSLIST.push(event);
       });
-      console.log("Upcoming 10 events:", eventList);
+      console.log('Got Events List');
     } else {
       console.log("No upcoming events found.");
     }
@@ -191,55 +201,142 @@ function createEvent(auth) {
   const calendar = google.calendar({version: 'v3', auth});
 
   // eventSend.confirmedMessage should be formatted
+
   calendar.events.insert({
     'calendarId': 'primary',
     resource: EVENTTOCREATE}, (err, event) => {
-    if (err) return console.log('The API returned an error: ' + err)
-    else console.log('Event Created:', event.summary);
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
+    else console.log('Event Created:', event.data);
   });
 }
 
 
 // List Available Times for the next 7 days
 function listAvailable(auth) {
-  const startDate = new Date();
+  AVAILABLETIMES = [];
+  const startDate = TIMEFOREVENT;
   const endDate = new Date();
-  const times = [];
-  const asyncDone = false;
+  endDate.setDate(startDate.getDate() + 7);
   const calendar = google.calendar({version: 'v3', auth});
 
+  let times = [];
 
-  // Running through 7 days
-  for (let i = 0; i < 8; i++) {
-    calendar.events.list({
-      calendarId: "primary",
-      timeMin: startDate.toISOString(),
-      timeMax:  endDate.toISOString(),
-      maxResults: 3, // Max 3 Time Slots per day
-      singleEvents: true,
-      orderBy: "startTime",
-    }, (err, res) => {
-      if (err) return console.log("The API returned an error: " + err);
-      const events = res.data.items;
-      if (events.length) {
-        console.log('Available Times')
-        events.map((event) => {
-          const end = event.end.dateTime || event.end.date;
-          times.push(end);
+  calendar.freebusy.query({
+    auth: auth,
+    resource: {
+      "timeMin": startDate.toISOString(),
+      "timeMax": endDate.toISOString(),
+      "items": [{"id": "primary"}]
+    }
+  }, function(err, res) {
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
+    const events = res.data.calendars.primary.busy;
+
+    // Make sure only three per day
+    let counter = 0;
+    let date = startDate;
+    if (events.length) {
+      events.map((event) => AVAILABLETIMES.push(event.end));
+      AVAILABLETIMES.sort((a,b) => (new Date(a)) - (new Date(b)));
+    } else {
+      console.log("No upcoming events found.");
+    }
+  });
+}
+
+
+combined = async(auth) => {
+  // Get all event start times for the chosen day
+  const calendar = google.calendar({version: "v3", auth});
+  LISTEVENTSFROM = EVENTTOCREATE.start.dateTime;
+
+  // Get Available times into AVAILABLETIMES global variable
+  AVAILABLETIMES = [];
+  const startDate = new Date(LISTEVENTSFROM);
+  const endDate = new Date();
+  endDate.setDate(startDate.getDate() + 7);
+
+  await calendar.freebusy.query({
+    auth: auth,
+    resource: {
+      "timeMin": startDate.toISOString(),
+      "timeMax": endDate.toISOString(),
+      "items": [{"id": "primary"}]
+    }
+  }, function(err, res) {
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
+    const events = res.data.calendars.primary.busy;
+
+    // Make sure only three per day
+    let counter = 0;
+    let date = startDate;
+
+    if (events.length) {
+      events.map((event) => {
+        AVAILABLETIMES.push(event.end)
+        EVENTSLIST.push({
+          start: event.start,
+          end: event.end,
         });
-        times.sort((a,b) => (new Date(a)) - (new Date(b)));
+      });
+      AVAILABLETIMES.sort((a,b) => (new Date(a)) - (new Date(b)));
+      EVENTSLIST.sort((item, item2) => (new Date(item.start)) - (new Date(item2.start)));
 
-        if(i === 7) { // Return the list of times when after the last asycn call
-          console.log(times);
-          return times.slice(0, 10); // Slice for the first 10
-        }
+      // Check if the selected time has a conflict
+      let conflictCheck = EVENTSLIST.map((event) => {
+        return (new Date(event.start).valueOf() >= (startDate).valueOf() &&
+        new Date(event.end).valueOf() >= (startDate).valueOf());
+      }).reduce((a,b) => a && b);
+
+      if (conflictCheck) {
+
+        FURTHERACTION = true;
+
+        web.chat.postMessage({
+            channel: 'DBWMAE72A',
+            text: 'Sorry you have another event at that time. Would you like to pick from these times when you are free?',
+            response_type: 'in_channel',
+            attachments: [
+                {
+                    "text": "Pick a Time",
+                    "fallback": "If you could read this message, you'd be choosing something fun to do right now?",
+                    "color": "#3AA3E3",
+                    "attachment_type": "default",
+                    "callback_id": "time_selection",
+                    "actions": [
+                        {
+                            "name": "available_times",
+                            "text": "Pick a time...",
+                            "type": "select",
+                            "options": (AVAILABLETIMES.slice(0, 10)).map((time, i) => {
+                              return {
+                                  "text": (new Date(time)).toLocaleString(),
+                                  "value": i
+                              }
+                            })
+                        }
+                    ]
+                }
+            ]
+        })
       } else {
-        console.log("No upcoming events found.");
+
+        createEvent(auth);
       }
-    });
-    startDate.setDate(startDate.getDate() + 1)
-    endDate.setDate(startDate.getDate() + 1);
-  }
+
+    } else {
+      console.log("No upcoming events found.");
+    }
+  });
 }
 
 // ----------------------------------------DialogFlow Functions -----------------------------------
@@ -296,26 +393,19 @@ return  sessionClient
       console.log(`  Response: ${result.fulfillmentText}`);
       console.log(`     DATE: ${(result.parameters.fields.date.stringValue)}`);
       console.log(`     SUBJECT: ${(result.parameters.fields.subject.stringValue)}`);
+      console.log(`     INVITEES: ${(result.parameters.fields.invitees.listValue.values)}`);
 
-      // start and end dates for same day events
+      TIMEFOREVENT = result.parameters.fields.date.stringValue;
+
+      // start and end dates for same day events (Formatting to date only)
       var startDate = new Date(result.parameters.fields.date.stringValue)
-      var endDate = new Date((startDate.setDate(startDate.getDate() + 1)))
-
-      var month = endDate.getUTCMonth() + 1; //months from 1-12
-      var day = endDate.getUTCDate();
-      var year = endDate.getUTCFullYear();
-      endDate = year + "-" + month + "-" + day;
-
-      var startDate = new Date(result.parameters.fields.date.stringValue)
-      var month = startDate.getUTCMonth() + 1; //months from 1-12
-      var day = startDate.getUTCDate();
-      var year = startDate.getUTCFullYear();
-      startDate = year + "-" + month + "-" + day;
+      var endDate = new Date();
+      endDate.setDate(startDate.getDate() + 1);
 
       // start and end times for meetings
-      const startTime = new Date(result.parameters.fields.date.stringValue);
-      var endTime = new Date(result.parameters.fields.date.stringValue);
-      endTime.setMinutes(endTime.getMinutes() + 30);
+      const startTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
+      var endTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
+      endTime.setMinutes(startTime.getMinutes() + 30);
 
 
       if (result.intent) {
@@ -328,27 +418,31 @@ return  sessionClient
             /////// info for the calendar
             confirmedMessage: {
               start:{
-                date: startDate,
+                date: startDate.toLocaleDateString(),
               },
               end : {
-                date: endDate,
+                date: endDate.toLocaleDateString(),
               },
               summary: result.parameters.fields.subject.stringValue,
             }
           }
-        } else if(result.intent.displayName === 'meeting') {
+        } else if(result.intent.displayName === 'meeting:add') {
           return resultObject = {
             /////// to be sent to check in with user
             eventSend: {confirmation: result.fulfillmentText},
             /////// info for the calendar
             confirmedMessage: {
               start:{
-                dateTime: result.parameters.fields.date.stringValue,
+                dateTime: result.parameters.fields.time.listValue.values[0].stringValue,
               },
               end : {
                 dateTime: endTime,
               },
               summary: result.parameters.fields.subject.stringValue,
+              // 'attendees': [
+              //   {'email': 'lpage@example.com'},
+              //   {'email': 'sbrin@example.com'},
+              // ],
             }
           }
         }
@@ -365,24 +459,46 @@ return  sessionClient
 // ---------------------------- Routes for communcation --------------------------------------------
 app.post('/oauth', (req, res) => {
   const payload = JSON.parse(req.body.payload);
-  if (payload.actions[0].value === "true") {
-    // T runs the google calendar stuff here
+
+  // If User Says to confirm event request
+  if (payload.actions[0].name === 'response' && payload.actions[0].value === "true") {
 
     // Sending Data to Google Calendar -------------------------------------
 
     fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
       if (err) return console.log("Error loading client secret file:", err);
       // Authorize a client with credentials, then call the Google Calendar API.
-      authorize(JSON.parse(content), createEvent)
+      if (EVENTTOCREATE.start.dateTime) authorize(JSON.parse(content), combined); // If a meeting
+      else if (EVENTTOCREATE.start.date) authorize(JSON.parse(content), createEvent); // If a reminder
 
     });
 
     // End of sending data to google calendar -------------------------------
 
-    CONFIRMED = false;
-    res.send('Scheduled!');
-  } else {
-    res.send({message: 'canceled scheduling'})
+    if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
+    else if (!FURTHERACTION) res.send('Scheduled!')
+
+  } else if (payload.actions[0].name === 'available_times' && payload.actions[0].selected_options[0].value) {
+
+    // Set Event to new start and end time
+    EVENTTOCREATE.start.dateTime = AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]
+    let endTime = new Date(AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]);
+    endTime.setMinutes(endTime.getMinutes() + 30);
+    EVENTTOCREATE.end.dateTime = endTime;
+
+    fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
+      if (err) return console.log("Error loading client secret file:", err);
+
+      // Authorize a client with credentials, then call the Google Calendar API.
+      authorize(JSON.parse(content), createEvent);
+
+    });
+
+    if (ERROR) res.send('Sorry I could not set that meeting up, please try again');
+    else res.send('Meeting Scheduled');
+
+  }  else {
+    res.send('Canceled')
   }
 })
 
