@@ -40,6 +40,11 @@ const storage = new Storage();
 // Global variables
 let EVENTTOCREATE = {};
 let CONFIRMED = false;
+let LISTEVENTSFROM = new Date();
+let EVENTSLIST = [];
+let AVAILABLETIMES = [];
+let ERROR = false;
+let TIMEFOREVENT = new Date();
 
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
@@ -51,6 +56,8 @@ rtm.on('message', (message) => {
      (!message.subtype && message.user === rtm.activeUserId) ) {
        return;
      }
+
+     console.log('channel', message.channel)
 
      if (!CONFIRMED) {
 
@@ -165,19 +172,22 @@ function listEvents(auth) {
   const calendar = google.calendar({version: "v3", auth});
   calendar.events.list({
     calendarId: "primary",
-    timeMin: (new Date()).toISOString(),
+    timeMin: LISTEVENTSFROM,
     maxResults: 10,
     singleEvents: true,
     orderBy: "startTime",
   }, (err, res) => {
-    if (err) return console.log("The API returned an error: " + err);
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
     const events = res.data.items;
     if (events.length) {
       events.map((event) => {
         const start = event.start.dateTime || event.start.date;
-        eventList.push(event);
+        EVENTSLIST.push(event);
       });
-      console.log("Upcoming 10 events:", eventList);
+      console.log('Got Events List');
     } else {
       console.log("No upcoming events found.");
     }
@@ -194,7 +204,10 @@ function createEvent(auth) {
   calendar.events.insert({
     'calendarId': 'primary',
     resource: EVENTTOCREATE}, (err, event) => {
-    if (err) return console.log('The API returned an error: ' + err)
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
     else console.log('Event Created:', event.summary);
   });
 }
@@ -202,6 +215,7 @@ function createEvent(auth) {
 
 // List Available Times for the next 7 days
 function listAvailable(auth) {
+  AVAILABLETIMES = [];
   const startDate = new Date();
   const endDate = new Date();
   const times = [];
@@ -219,19 +233,21 @@ function listAvailable(auth) {
       singleEvents: true,
       orderBy: "startTime",
     }, (err, res) => {
-      if (err) return console.log("The API returned an error: " + err);
+      if (err) {
+        ERROR = true;
+        return console.log("The API returned an error: " + err);
+      }
       const events = res.data.items;
       if (events.length) {
         console.log('Available Times')
         events.map((event) => {
           const end = event.end.dateTime || event.end.date;
-          times.push(end);
+          AVAILABLETIMES.push(end);
         });
         times.sort((a,b) => (new Date(a)) - (new Date(b)));
 
         if(i === 7) { // Return the list of times when after the last asycn call
-          console.log(times);
-          return times.slice(0, 10); // Slice for the first 10
+          console.log('Got Availale times');
         }
       } else {
         console.log("No upcoming events found.");
@@ -240,6 +256,110 @@ function listAvailable(auth) {
     startDate.setDate(startDate.getDate() + 1)
     endDate.setDate(startDate.getDate() + 1);
   }
+}
+
+function combined(auth){
+
+  // Get all event start times for the chosen day
+  const calendar = google.calendar({version: "v3", auth});
+  calendar.events.list({
+    calendarId: "primary",
+    timeMin: TIMEFOREVENT,
+    maxResults: 10,
+    singleEvents: true,
+    orderBy: "startTime",
+  }, (err, res) => {
+    if (err) {
+      ERROR = true;
+      return console.log("The API returned an error: " + err);
+    }
+    const events = res.data.items;
+    if (events.length) {
+
+      // Check if the selected time has a conflict
+      let conflictCheck = events.map((event) => {
+        (event.start.date || event.start.dateTime).valueOf() === (TIMEFOREVENT).valueOf()
+      })
+      .reduce((a,b) => a && b);
+      console.log('Conflict?', conflictCheck);
+
+      if (conflictCheck) {
+
+        // Get Available times into AVAILABLETIMES global variable
+        AVAILABLETIMES = [];
+        let startDate = TIMEFOREVENT;
+        let endDate = TIMEFOREVENT;
+
+        // Running through 7 days
+        for (let i = 0; i < 8; i++) {
+          calendar.events.list({
+            calendarId: "primary",
+            timeMin: startDate.toISOString(),
+            timeMax:  endDate.toISOString(),
+            maxResults: 3, // Max 3 Time Slots per day
+            singleEvents: true,
+            orderBy: "startTime",
+          }, (err, res) => {
+            if (err) {
+              ERROR = true;
+              return console.log("The API returned an error: " + err);
+            }
+            const events = res.data.items;
+            if (events.length) {
+
+
+              events.map((event) => {
+                const end = event.end.dateTime || event.end.date;
+                AVAILABLETIMES.push(end);
+              });
+              AVAILABLETIMES.sort((a,b) => (new Date(a)) - (new Date(b)));
+
+              if(i === 7) { // Send the list of times when
+                userRequest(message.text)
+                  .then(answer => {
+                     web.chat.postMessage({
+                      channel: 'DBWMAE72A',
+                      text: 'Would you like to pick a time?',
+                      response_type: 'in_channel',
+                      attachments: [
+                          {
+                              "text": "Pick a Time",
+                              "fallback": "If you could read this message, you'd be choosing something fun to do right now?",
+                              "color": "#3AA3E3",
+                              "attachment_type": "default",
+                              "callback_id": "time_selection",
+                              "actions": [
+                                  {
+                                      "name": "available_times",
+                                      "text": "Pick a time...",
+                                      "type": "select",
+                                      "options": (AVAILABLETIMES.slice(0, 10)).map((time, i) => {
+                                        return {
+                                            "text": (new Date(time)).toLocaleString(),
+                                            "value": i
+                                        }
+                                      })
+                                  }
+                              ]
+                          }
+                      ]
+                  })
+                })
+              }
+            } else {
+              console.log("No upcoming events found.");
+            }
+          });
+          startDate.setDate(startDate.getDate() + 1)
+          endDate.setDate(startDate.getDate() + 1);
+        }
+
+      }
+
+    } else {
+      console.log("No upcoming events found.");
+    }
+  });
 }
 
 // ----------------------------------------DialogFlow Functions -----------------------------------
@@ -297,7 +417,9 @@ return  sessionClient
       console.log(`     DATE: ${(result.parameters.fields.date.stringValue)}`);
       console.log(`     SUBJECT: ${(result.parameters.fields.subject.stringValue)}`);
 
-      // start and end dates for same day events
+      TIMEFOREVENT = result.parameters.fields.date.stringValue;
+
+      // start and end dates for same day events (Formatting to date only)
       var startDate = new Date(result.parameters.fields.date.stringValue)
       var endDate = new Date((startDate.setDate(startDate.getDate() + 1)))
 
@@ -336,7 +458,7 @@ return  sessionClient
               summary: result.parameters.fields.subject.stringValue,
             }
           }
-        } else if(result.intent.displayName === 'meeting') {
+        } else if(result.intent.displayName === 'meeting:add') {
           return resultObject = {
             /////// to be sent to check in with user
             eventSend: {confirmation: result.fulfillmentText},
@@ -365,8 +487,9 @@ return  sessionClient
 // ---------------------------- Routes for communcation --------------------------------------------
 app.post('/oauth', (req, res) => {
   const payload = JSON.parse(req.body.payload);
+
+  // If User Says to confirm event
   if (payload.actions[0].value === "true") {
-    // T runs the google calendar stuff here
 
     // Sending Data to Google Calendar -------------------------------------
 
@@ -380,9 +503,11 @@ app.post('/oauth', (req, res) => {
     // End of sending data to google calendar -------------------------------
 
     CONFIRMED = false;
-    res.send('Scheduled!');
+    if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
+    else res.send('Scheduled!')
+
   } else {
-    res.send({message: 'canceled scheduling'})
+    res.send('Canceled Reminder')
   }
 })
 
