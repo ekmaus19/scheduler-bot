@@ -401,6 +401,7 @@ return  sessionClient
 
       TIMEFOREVENT = result.parameters.fields.date.stringValue;
 
+
       if (result.intent) {
         console.log(`  Intent: ${result.intent.displayName}`);
 
