@@ -36,6 +36,9 @@ const Storage = require('@google-cloud/storage');
 // environment.
 const storage = new Storage();
 
+// Other Setup --------------------------------------------------------------------------
+const axios = require('axios');
+
 //---------------------------------------- End of all Setup ----------------------------
 // Global variables
 let EVENTTOCREATE = {};
@@ -382,6 +385,7 @@ storage
   };
   console.log("request test ============", request)
 
+let _result;
   // Send request and log result
 return  sessionClient
     .detectIntent(request)
@@ -393,25 +397,21 @@ return  sessionClient
       console.log(`  Response: ${result.fulfillmentText}`);
       console.log(`     DATE: ${(result.parameters.fields.date.stringValue)}`);
       console.log(`     SUBJECT: ${(result.parameters.fields.subject.stringValue)}`);
-      console.log(`     INVITEES: ${(result.parameters.fields.invitees.listValue.values)}`);
+      // console.log(`     INVITEES: ${(result.parameters.fields.invitees.listValue.values)}`);
 
       TIMEFOREVENT = result.parameters.fields.date.stringValue;
-
-      // start and end dates for same day events (Formatting to date only)
-      var startDate = new Date(result.parameters.fields.date.stringValue)
-      var endDate = new Date();
-      endDate.setDate(startDate.getDate() + 1);
-
-      // start and end times for meetings
-      const startTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
-      var endTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
-      endTime.setMinutes(startTime.getMinutes() + 30);
 
 
       if (result.intent) {
         console.log(`  Intent: ${result.intent.displayName}`);
 
         if (result.intent.displayName === 'reminder') {
+
+          // start and end dates for same day events (Formatting to date only)
+          var startDate = new Date(result.parameters.fields.date.stringValue)
+          var endDate = new Date();
+          endDate.setDate(startDate.getDate() + 1);
+
           return resultObject = {
             /////// to be sent to check in with user
             eventSend: {confirmation: result.fulfillmentText},
@@ -427,24 +427,49 @@ return  sessionClient
             }
           }
         } else if(result.intent.displayName === 'meeting:add') {
-          return resultObject = {
-            /////// to be sent to check in with user
-            eventSend: {confirmation: result.fulfillmentText},
-            /////// info for the calendar
-            confirmedMessage: {
-              start:{
-                dateTime: result.parameters.fields.time.listValue.values[0].stringValue,
-              },
-              end : {
-                dateTime: endTime,
-              },
-              summary: result.parameters.fields.subject.stringValue,
-              // 'attendees': [
-              //   {'email': 'lpage@example.com'},
-              //   {'email': 'sbrin@example.com'},
-              // ],
+
+          // start and end times for meetings
+          const startTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
+          var endTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
+          endTime.setMinutes(startTime.getMinutes() + 30);
+
+          // Getting attendee names from slackbot
+          let attNames = result.parameters.fields.invitees.listValue.values.map(item => item.stringValue);
+
+          // Getting list of users in the slack team
+          return axios('https://slack.com/api/users.list', {
+            'headers' :{
+              'Content-type': 'application/json',
+              'Authorization': 'Bearer '+process.env.SLACKBOT_TOKEN
             }
-          }
+          })
+          .then(response => {
+
+            // Gets people who's name matches the given names
+            let attPeople = attNames.map(name => response.data.members.filter(item => (item.real_name.indexOf(name) !== -1) || (item.profile.display_name.indexOf(name) !== -1)));
+
+            // Separates email and display name
+            let attendees = attPeople.map(item => {
+              return {'email': item[0].profile.email, 'displayName': item[0].profile.display_name}});
+
+            return {
+              /////// to be sent to check in with user
+              eventSend: {confirmation: result.fulfillmentText},
+              /////// info for the calendar
+              confirmedMessage: {
+                start:{
+                  dateTime: result.parameters.fields.time.listValue.values[0].stringValue,
+                },
+                end : {
+                  dateTime: endTime,
+                },
+                summary: result.parameters.fields.subject.stringValue,
+                'attendees': attendees,
+              }
+            }
+          })
+          .catch(err => console.log('The Get Request returned and err -', err));
+
         }
 
       } else {
