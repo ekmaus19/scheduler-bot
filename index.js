@@ -44,14 +44,13 @@ let LISTEVENTSFROM = new Date();
 let EVENTSLIST = [];
 let AVAILABLETIMES = [];
 let ERROR = false;
-let TIMEFOREVENT = new Date();
-
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
 
 let answer;
 rtm.on('message', (message) => {
+  CONFIRMED = false;
   if ( (message.subtype && message.subtype === 'bot_message') ||
      (!message.subtype && message.user === rtm.activeUserId) ) {
        return;
@@ -201,6 +200,7 @@ function createEvent(auth) {
   const calendar = google.calendar({version: 'v3', auth});
 
   // eventSend.confirmedMessage should be formatted
+  console.log('Creating event ...', EVENTTOCREATE)
   calendar.events.insert({
     'calendarId': 'primary',
     resource: EVENTTOCREATE}, (err, event) => {
@@ -208,7 +208,7 @@ function createEvent(auth) {
       ERROR = true;
       return console.log("The API returned an error: " + err);
     }
-    else console.log('Event Created:', event.summary);
+    else console.log('Event Created:', event.data);
   });
 }
 
@@ -216,7 +216,7 @@ function createEvent(auth) {
 // List Available Times for the next 7 days
 function listAvailable(auth) {
   AVAILABLETIMES = [];
-  const startDate = new Date();
+  const startDate = TIMEFOREVENT;
   const endDate = new Date();
   endDate.setDate(startDate.getDate() + 7);
   const calendar = google.calendar({version: 'v3', auth});
@@ -230,7 +230,7 @@ function listAvailable(auth) {
       "timeMax": endDate.toISOString(),
       "items": [{"id": "primary"}]
     }
-  }, (err, res) => {
+  }, function(err, res) {
     if (err) {
       ERROR = true;
       return console.log("The API returned an error: " + err);
@@ -250,102 +250,84 @@ function listAvailable(auth) {
 }
 
 
-function combined(auth){
-
+combined = async(auth) => {
   // Get all event start times for the chosen day
   const calendar = google.calendar({version: "v3", auth});
-  calendar.events.list({
-    calendarId: "primary",
-    timeMin: TIMEFOREVENT,
-    maxResults: 10,
-    singleEvents: true,
-    orderBy: "startTime",
-  }, (err, res) => {
+  LISTEVENTSFROM = EVENTTOCREATE.start.dateTime;
+
+  // Get Available times into AVAILABLETIMES global variable
+  AVAILABLETIMES = [];
+  const startDate = new Date(LISTEVENTSFROM);
+  const endDate = new Date();
+  endDate.setDate(startDate.getDate() + 7);
+
+  await calendar.freebusy.query({
+    auth: auth,
+    resource: {
+      "timeMin": startDate.toISOString(),
+      "timeMax": endDate.toISOString(),
+      "items": [{"id": "primary"}]
+    }
+  }, function(err, res) {
     if (err) {
       ERROR = true;
       return console.log("The API returned an error: " + err);
     }
-    const events = res.data.items;
+    const events = res.data.calendars.primary.busy;
+
+    // Make sure only three per day
+    let counter = 0;
+    let date = startDate;
+
     if (events.length) {
+      events.map((event) => {
+        AVAILABLETIMES.push(event.end)
+        EVENTSLIST.push({
+          start: event.start,
+          end: event.end,
+        });
+      });
+      AVAILABLETIMES.sort((a,b) => (new Date(a)) - (new Date(b)));
+      EVENTSLIST.sort((item, item2) => (new Date(item.start)) - (new Date(item2.start)));
 
       // Check if the selected time has a conflict
-      let conflictCheck = events.map((event) => {
-        (event.start.date || event.start.dateTime).valueOf() === (TIMEFOREVENT).valueOf()
-      })
-      .reduce((a,b) => a && b);
-      console.log('Conflict?', conflictCheck);
+      let conflictCheck = EVENTSLIST.map((event) => {
+        return (new Date(event.start).valueOf() >= (startDate).valueOf() &&
+        new Date(event.end).valueOf() >= (startDate).valueOf());
+      }).reduce((a,b) => a && b);
 
       if (conflictCheck) {
 
-        // Get Available times into AVAILABLETIMES global variable
-        AVAILABLETIMES = [];
-        let startDate = TIMEFOREVENT;
-        let endDate = TIMEFOREVENT;
+        web.chat.postMessage({
+            channel: 'DBWMAE72A',
+            text: 'Sorry you have another event at that time. Would you like to pick from these times when you are free?',
+            response_type: 'in_channel',
+            attachments: [
+                {
+                    "text": "Pick a Time",
+                    "fallback": "If you could read this message, you'd be choosing something fun to do right now?",
+                    "color": "#3AA3E3",
+                    "attachment_type": "default",
+                    "callback_id": "time_selection",
+                    "actions": [
+                        {
+                            "name": "available_times",
+                            "text": "Pick a time...",
+                            "type": "select",
+                            "options": (AVAILABLETIMES.slice(0, 10)).map((time, i) => {
+                              return {
+                                  "text": (new Date(time)).toString(),
+                                  "value": i
+                              }
+                            })
+                        }
+                    ]
+                }
+            ]
+        })
+      } else {
 
-        // Running through 7 days
-        for (let i = 0; i < 8; i++) {
-          calendar.events.list({
-            calendarId: "primary",
-            timeMin: startDate.toISOString(),
-            timeMax:  endDate.toISOString(),
-            maxResults: 3, // Max 3 Time Slots per day
-            singleEvents: true,
-            orderBy: "startTime",
-          }, (err, res) => {
-            if (err) {
-              ERROR = true;
-              return console.log("The API returned an error: " + err);
-            }
-            const events = res.data.items;
-            if (events.length) {
-
-
-              events.map((event) => {
-                const end = event.end.dateTime || event.end.date;
-                AVAILABLETIMES.push(end);
-              });
-              AVAILABLETIMES.sort((a,b) => (new Date(a)) - (new Date(b)));
-
-              if(i === 7) { // Send the list of times when
-                userRequest(message.text)
-                  .then(answer => {
-                     web.chat.postMessage({
-                      channel: 'DBWMAE72A',
-                      text: 'Would you like to pick a time?',
-                      response_type: 'in_channel',
-                      attachments: [
-                          {
-                              "text": "Pick a Time",
-                              "fallback": "If you could read this message, you'd be choosing something fun to do right now?",
-                              "color": "#3AA3E3",
-                              "attachment_type": "default",
-                              "callback_id": "time_selection",
-                              "actions": [
-                                  {
-                                      "name": "available_times",
-                                      "text": "Pick a time...",
-                                      "type": "select",
-                                      "options": (AVAILABLETIMES.slice(0, 10)).map((time, i) => {
-                                        return {
-                                            "text": (new Date(time)).toLocaleString(),
-                                            "value": i
-                                        }
-                                      })
-                                  }
-                              ]
-                          }
-                      ]
-                  })
-                })
-              }
-            } else {
-              console.log("No upcoming events found.");
-            }
-          });
-          startDate.setDate(startDate.getDate() + 1)
-          endDate.setDate(startDate.getDate() + 1);
-        }
-
+        createEvent(auth);
       }
 
     } else {
@@ -408,28 +390,19 @@ return  sessionClient
       console.log(`  Response: ${result.fulfillmentText}`);
       console.log(`     DATE: ${(result.parameters.fields.date.stringValue)}`);
       console.log(`     SUBJECT: ${(result.parameters.fields.subject.stringValue)}`);
+      console.log(`     INVITEES: ${(result.parameters.fields.invitees.listValue.values)}`);
 
       TIMEFOREVENT = result.parameters.fields.date.stringValue;
 
       // start and end dates for same day events (Formatting to date only)
       var startDate = new Date(result.parameters.fields.date.stringValue)
-      var endDate = new Date((startDate.setDate(startDate.getDate() + 1)))
-
-      var month = endDate.getUTCMonth() + 1; //months from 1-12
-      var day = endDate.getUTCDate();
-      var year = endDate.getUTCFullYear();
-      endDate = year + "-" + month + "-" + day;
-
-      var startDate = new Date(result.parameters.fields.date.stringValue)
-      var month = startDate.getUTCMonth() + 1; //months from 1-12
-      var day = startDate.getUTCDate();
-      var year = startDate.getUTCFullYear();
-      startDate = year + "-" + month + "-" + day;
+      var endDate = new Date();
+      endDate.setDate(startDate.getDate() + 1);
 
       // start and end times for meetings
-      const startTime = new Date(result.parameters.fields.date.stringValue);
-      var endTime = new Date(result.parameters.fields.date.stringValue);
-      endTime.setMinutes(endTime.getMinutes() + 30);
+      const startTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
+      var endTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
+      endTime.setMinutes(startTime.getMinutes() + 30);
 
 
       if (result.intent) {
@@ -442,10 +415,10 @@ return  sessionClient
             /////// info for the calendar
             confirmedMessage: {
               start:{
-                date: startDate,
+                date: startDate.toLocaleDateString(),
               },
               end : {
-                date: endDate,
+                date: endDate.toLocaleDateString(),
               },
               summary: result.parameters.fields.subject.stringValue,
             }
@@ -457,12 +430,16 @@ return  sessionClient
             /////// info for the calendar
             confirmedMessage: {
               start:{
-                dateTime: result.parameters.fields.date.stringValue,
+                dateTime: result.parameters.fields.time.listValue.values[0].stringValue,
               },
               end : {
                 dateTime: endTime,
               },
               summary: result.parameters.fields.subject.stringValue,
+              // 'attendees': [
+              //   {'email': 'lpage@example.com'},
+              //   {'email': 'sbrin@example.com'},
+              // ],
             }
           }
         }
@@ -488,7 +465,8 @@ app.post('/oauth', (req, res) => {
     fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
       if (err) return console.log("Error loading client secret file:", err);
       // Authorize a client with credentials, then call the Google Calendar API.
-      authorize(JSON.parse(content), listAvailable)
+      if (EVENTTOCREATE.start.dateTime) authorize(JSON.parse(content), combined); // If a meeting
+      else if (EVENTTOCREATE.start.date) authorize(JSON.parse(content), createEvent); // If a reminder
 
     });
 
@@ -498,7 +476,7 @@ app.post('/oauth', (req, res) => {
     else res.send('Scheduled!')
 
   } else {
-    res.send('Canceled Reminder')
+    res.send('Canceled')
   }
 })
 
