@@ -49,6 +49,7 @@ let AVAILABLETIMES = [];
 let ERROR = false;
 let FURTHERACTION = false;
 let SLACKBOTCHANNEL = '';
+let INVITEEIDS = [];
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
@@ -106,6 +107,12 @@ rtm.on('message', (message) => {
                     "type": "button",
                     "value": "ask",
                 });
+              }
+
+              // Edit message no invitees where listed in a meeting
+              if(answer.eventSend.confirmation.indexOf('invite anyone else') !==-1){
+                postMessage.text = answer.eventSend.confirmation;
+                postMessage.attachments = [];
               }
 
               web.chat.postMessage(postMessage);
@@ -460,11 +467,17 @@ return  sessionClient
           .then(response => {
 
             // Gets people who's name matches the given names
-            let attPeople = attNames.map(name => response.data.members.filter(item => (item.real_name.indexOf(name) !== -1) || (item.profile.display_name.indexOf(name) !== -1)));
+            let attPeople = attNames.map(
+              name => response.data.members.filter(
+                item => (item.real_name.indexOf(name) !== -1) ||
+                 (item.profile.display_name.indexOf(name) !== -1)));
 
             // Separates email and display name
             let attendees = attPeople.map(item => {
               return {'email': item[0].profile.email, 'displayName': item[0].profile.display_name}});
+
+            // Collecting IDs incase confirmation is needed
+            INVITEEIDS = attPeople.map(item => item[0].id)
 
             return {
               /////// to be sent to check in with user
@@ -518,6 +531,58 @@ app.post('/oauth', (req, res) => {
     if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
     else if (!FURTHERACTION) res.send('Scheduled!')
 
+  // For When Confirming with invitees
+  } else if (payload.actions[0].name === 'response' && payload.actions[0].value === "ask") {
+
+    // Getting the channel id of invitees
+    axios('https://slack.com/api/im.list', {
+        'headers' :{
+        'Content-type': 'application/json',
+        'Authorization': 'Bearer '+process.env.SLACKBOT_TOKEN
+      }
+    })
+    .then(response => {
+      let imIDs = INVITEEIDS.map(item => response.data.ims.filter(im => im.user === item));
+
+      // Send Message to each person
+      imIDs.forEach(item => {
+        web.chat.postMessage({
+           channel: message.channel,
+           text: `You have been invited to a meeting at ${EVENTTOCREATE.start.dateTime}, Are you available?`,
+           attachments: [
+               {
+                   "fallback": "You are unable to confirm",
+                   "callback_id": "wopr_game",
+                   "color": "#3AA3E3",
+                   "attachment_type": "default",
+                   "actions": [
+                       {
+                           "name": "invite_response",
+                           "text": "Yes",
+                           "type": "button",
+                           "value": "true",
+                           "style": "primary",
+                       },
+                       {
+                           "name": "invite_response",
+                           "text": "No",
+                           "type": "button",
+                           "value": "false",
+                           "style": "danger",
+                       }
+                   ]
+               }
+           ]
+       });
+     });
+
+    });
+
+  // When a confirmation gets a no response
+  } else if (payload.actions[0].name === 'invite_response' && payload.actions[0].value  === "false") {
+
+    console.log(payload.user);
+  // For time conflicts
   } else if (payload.actions[0].name === 'available_times' && payload.actions[0].selected_options[0].value) {
 
     // Set Event to new start and end time
