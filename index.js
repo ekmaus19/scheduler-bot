@@ -69,38 +69,50 @@ rtm.on('message', (message) => {
          userRequest(message.text)
            .then(answer => {
              SLACKBOTCHANNEL = message.channel;
-              web.chat.postMessage({
-               channel: message.channel,
-               text: `${answer.eventSend.confirmation}, Please confirm!`,
-               attachments: [
-                   {
-                       "fallback": "You are unable to confirm",
-                       "callback_id": "wopr_game",
-                       "color": "#3AA3E3",
-                       "attachment_type": "default",
-                       "actions": [
-                           {
-                               "name": "response",
-                               "text": "Yes",
-                               "type": "button",
-                               "value": "true",
-                               "style": "primary",
-                           },
-                           {
-                               "name": "response",
-                               "text": "No",
-                               "type": "button",
-                               "value": "false",
-                               "style": "danger",
-                           }
-                       ]
-                   }
-               ]
-           })
+             let postMessage = {
+                  channel: message.channel,
+                  text: `${answer.eventSend.confirmation}, Please confirm!`,
+                  attachments: [
+                      {
+                          "fallback": "You are unable to confirm",
+                          "callback_id": "wopr_game",
+                          "color": "#3AA3E3",
+                          "attachment_type": "default",
+                          "actions": [
+                              {
+                                  "name": "response",
+                                  "text": "Yes",
+                                  "type": "button",
+                                  "value": "true",
+                                  "style": "primary",
+                              },
+                              {
+                                  "name": "response",
+                                  "text": "No",
+                                  "type": "button",
+                                  "value": "false",
+                                  "style": "danger",
+                              }
+                          ]
+                      }
+                  ]
+              }
 
-           EVENTTOCREATE = answer.confirmedMessage;
-           CONFIRMED = true;
-         })
+              // Add option to invite confirm with slack members if not a reminder
+              if (answer.eventSend.confirmation.indexOf('remind') === -1) {
+                postMessage.attachments[0].actions.push({
+                    "name": "response",
+                    "text": "Ask Invitees for Confirmation",
+                    "type": "button",
+                    "value": "ask",
+                });
+              }
+
+              web.chat.postMessage(postMessage);
+
+             EVENTTOCREATE = answer.confirmedMessage;
+             CONFIRMED = true;
+           })
            .then(() => console.log('Message sent to channel'))
            .catch(console.error)
      }
