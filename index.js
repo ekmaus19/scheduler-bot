@@ -558,7 +558,7 @@ app.post('/oauth', (req, res) => {
       imIDs.forEach(item => {
         web.chat.postMessage({
            channel: item[0].id,
-           text: `You have been invited to a meeting at ${EVENTTOCREATE.start.dateTime}, Are you available?`,
+           text: `You have been invited to a meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}, Are you available?`,
            attachments: [
                {
                    "fallback": "You are unable to confirm",
@@ -595,16 +595,16 @@ app.post('/oauth', (req, res) => {
 
     // Remove user from attendees list
     let user = INVITEES.filter(item => item.id === payload.user.id);
-    EVENTTOCREATE.attendees = EVENTTOCREATE.attendees.filter(item => item.email !== user.email)
+    EVENTTOCREATE.attendees = EVENTTOCREATE.attendees.filter(item => item.email !== user[0].email)
 
     // Send note that user said no
 
     let postMessage = {
        channel: SLACKBOTCHANNEL,
-       text: `${payload.user.name} said they are unavailable for the meeting`
+       text: `${user[0].name} said they are unavailable for the meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}`
      }
 
-     if (INVITEES.attendees.length > 0) {
+     if (EVENTTOCREATE.attendees.length > 0) {
 
        postMessage.text = postMessage.text + '.  Would you like to schedule the event now?'
        postMessage.attachments = [
@@ -631,9 +631,13 @@ app.post('/oauth', (req, res) => {
                ]
            }
        ]
+     } else {
+       postMessage.text = postMessage.text + '. None of the invitees are available for the selected meeting time so I have canceled the meeting :(';
      }
 
      web.chat.postMessage(postMessage);
+
+     res.send('Response Sent');
 
    // When a confirmation gets a yes response
  } else if (payload.actions[0].name === 'invite_response' && payload.actions[0].value  === "true") {
@@ -641,7 +645,7 @@ app.post('/oauth', (req, res) => {
      // Send note that user said yes
      web.chat.postMessage({
         channel: SLACKBOTCHANNEL,
-        text: `${payload.user.name} said they are available for the meeting. Would you like to schedule the meeting now?`,
+        text: `${user[0].name} said they are available for the meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}. Would you like to schedule the meeting now?`,
         attachments : [
             {
                 "fallback": "You are unable to confirm",
@@ -667,6 +671,8 @@ app.post('/oauth', (req, res) => {
             }
         ]
       });
+
+      res.send('Response Sent');
 
   // For time conflicts
   } else if (payload.actions[0].name === 'available_times' && payload.actions[0].selected_options[0].value) {
