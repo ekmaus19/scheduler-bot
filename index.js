@@ -206,7 +206,7 @@ function listEvents(auth) {
   }, (err, res) => {
     if (err) {
       ERROR = true;
-      return console.log("The API returned an error: " + err);
+      return console.log("The API returned an error (209): " + err);
     }
     const events = res.data.items;
     if (events.length) {
@@ -228,13 +228,12 @@ function createEvent(auth) {
   const calendar = google.calendar({version: 'v3', auth});
 
   // eventSend.confirmedMessage should be formatted
-
   calendar.events.insert({
     'calendarId': 'primary',
     resource: EVENTTOCREATE}, (err, event) => {
     if (err) {
       ERROR = true;
-      return console.log("The API returned an error: " + err);
+      return console.log("The API returned an error (237): " + err);
     }
     else console.log('Event Created:', event.data);
   });
@@ -261,7 +260,7 @@ function listAvailable(auth) {
   }, function(err, res) {
     if (err) {
       ERROR = true;
-      return console.log("The API returned an error: " + err);
+      return console.log("The API returned an error (264): " + err);
     }
     const events = res.data.calendars.primary.busy;
 
@@ -299,7 +298,7 @@ combined = async(auth) => {
   }, function(err, res) {
     if (err) {
       ERROR = true;
-      return console.log("The API returned an error: " + err);
+      return console.log("The API returned an error (302): " + err);
     }
     const events = res.data.calendars.primary.busy;
 
@@ -320,9 +319,9 @@ combined = async(auth) => {
 
       // Check if the selected time has a conflict
       let conflictCheck = EVENTSLIST.map((event) => {
-        return (new Date(event.start).valueOf() >= (startDate).valueOf() &&
-        new Date(event.end).valueOf() >= (startDate).valueOf());
-      }).reduce((a,b) => a && b);
+        return (new Date(event.start).valueOf() <= LISTEVENTSFROM.valueOf() &&
+        new Date(event.end).valueOf() >= LISTEVENTSFROM.valueOf());
+      }).reduce((a,b) => a || b);
 
       if (conflictCheck) {
 
@@ -453,9 +452,9 @@ return  sessionClient
         } else if (result.intent.displayName === 'meeting:add') {
 
           // start and end times for meetings
-          const startTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
-          var endTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
-          endTime.setMinutes(startTime.getMinutes() + 30);
+          const startTime = new Date(result.parameters.fields.date.stringValue) // Set to chosen date and time
+          let endTime = new Date(result.parameters.fields.date.stringValue);
+          endTime.setMinutes(startTime.getMinutes() + 30); // Add thiry minutes for end time
 
           // Getting attendee names from slackbot
           let attNames = result.parameters.fields.invitees.listValue.values.map(item => item.stringValue);
@@ -493,14 +492,14 @@ return  sessionClient
               /////// info for the calendar
               confirmedMessage: {
                 start:{
-                  dateTime: result.parameters.fields.time.listValue.values[0].stringValue,
+                  dateTime: startTime,
                 },
                 end : {
                   dateTime: endTime,
                 },
                 summary: result.parameters.fields.subject.stringValue,
                 'attendees': attendees,
-                'sendNotifications': true,
+                sendNotifications: true,
               }
             }
           })
@@ -519,7 +518,6 @@ return  sessionClient
 
 // __________________________________________ Routes for communcation __________________________________________
 app.post('/oauth', (req, res) => {
-  console.log('Get in');
   const payload = JSON.parse(req.body.payload);
 
 // --------------------------- Reminder Request stuff---------------------------------------------------
@@ -540,13 +538,13 @@ app.post('/oauth', (req, res) => {
     // End of sending data to google calendar -------------------------------
 
     if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
-    else if (FURTHERACTION) res.send('Scheduled!')
+    res.send('Scheduled!')
 
 // -----------------------------------------End of request Reminder Stuff -----------------------------
 // -----------------------------------------Beginning of request Meeting Stuff -----------------------------
 
   // For When Confirming with invitees
-  } else if (payload.actions[0].name === 'response' && payload.actions[0].value === "ask") {
+} else if (payload.actions[0].name === 'response' && (payload.actions[0].value === "ask" || payload.actions[0].value === "ask_again")) {
 
     // Getting the channel id of invitees
     return axios('https://slack.com/api/im.list', {
@@ -560,9 +558,9 @@ app.post('/oauth', (req, res) => {
 
       // Send Message to each person
       imIDs.forEach(item => {
-        web.chat.postMessage({
+        let postMessage = {
            channel: item[0].id,
-           text: `You have been invited to a meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}, Are you available?`,
+           text: `You have been invited to a meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()} with ${payload.user.name}, Are you available?`,
            attachments: [
                {
                    "fallback": "You are unable to confirm",
@@ -587,7 +585,14 @@ app.post('/oauth', (req, res) => {
                    ]
                }
            ]
-       });
+       }
+
+       if (payload.actions[0].value === "ask_again") {
+         postMessage.text = `${payload.user.name} has updated the meeting time to ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}. Are you still available?`
+       }
+
+       web.chat.postMessage(postMessage);
+
      });
 
      res.send('Invitations Sent');
@@ -682,8 +687,7 @@ app.post('/oauth', (req, res) => {
 
   // For time conflicts - when time picked
   } else if (payload.actions[0].name === 'available_times' && payload.actions[0].selected_options[0].value) {
-    console.log('Picked time, beter place to console you genius')
-    console.log(payload.channel.id)
+
     // Set Event to new start and end time
     EVENTTOCREATE.start.dateTime = AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]
     let endTime = new Date(AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]);
@@ -725,16 +729,16 @@ app.post('/oauth', (req, res) => {
           "name": "response",
           "text": "Ask Invitees for Confirmation",
           "type": "button",
-          "value": "ask",
+          "value": "ask_again",
       });
     }
 
     web.chat.postMessage(postMessage);
 
     if (ERROR) res.send('Sorry I could not set that meeting up, please try again');
+    res.send('Selected ', )
 // -----------------------------------------End of request Meeting Stuff -----------------------------
 }  else { // If User does not confirm request
-    console.log(payload.user)
     res.send('Canceled');
   }
 })
