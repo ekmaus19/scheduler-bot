@@ -48,6 +48,7 @@ let EVENTSLIST = [];
 let AVAILABLETIMES = [];
 let ERROR = false;
 let FURTHERACTION = false;
+let SLACKBOTCHANNEL = '';
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
@@ -67,6 +68,7 @@ rtm.on('message', (message) => {
        // Send Confirmation Response to request
          userRequest(message.text)
            .then(answer => {
+             SLACKBOTCHANNEL = message.channel;
               web.chat.postMessage({
                channel: message.channel,
                text: `${answer.eventSend.confirmation}, Please confirm!`,
@@ -305,7 +307,7 @@ combined = async(auth) => {
         FURTHERACTION = true;
 
         web.chat.postMessage({
-            channel: 'DBWMAE72A',
+            channel: SLACKBOTCHANNEL,
             text: 'Sorry you have another event at that time. Would you like to pick from these times when you are free?',
             response_type: 'in_channel',
             attachments: [
@@ -465,6 +467,7 @@ return  sessionClient
                 },
                 summary: result.parameters.fields.subject.stringValue,
                 'attendees': attendees,
+                'sendNotifications': true,
               }
             }
           })
