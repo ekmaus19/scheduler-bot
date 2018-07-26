@@ -50,6 +50,7 @@ let ERROR = false;
 let FURTHERACTION = false;
 let SLACKBOTCHANNEL = '';
 let INVITEES = [];
+let SLACKBOTCHANNELSET = false;
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
@@ -62,14 +63,16 @@ rtm.on('message', (message) => {
        return;
      }
 
-     console.log('channel', message.channel)
-
      if (!CONFIRMED) {
 
        // Send Confirmation Response to request
          userRequest(message.text)
            .then(answer => {
-             SLACKBOTCHANNEL = message.channel;
+             if (!SLACKBOTCHANNELSET) {
+               SLACKBOTCHANNEL = message.channel;
+               SLACKBOTCHANNELSET = true;
+             }
+
              let postMessage = {
                   channel: message.channel,
                   text: `${answer.eventSend.confirmation}, Please confirm!`,
@@ -516,6 +519,7 @@ return  sessionClient
 
 // __________________________________________ Routes for communcation __________________________________________
 app.post('/oauth', (req, res) => {
+  console.log('Get in');
   const payload = JSON.parse(req.body.payload);
 
 // --------------------------- Reminder Request stuff---------------------------------------------------
@@ -536,7 +540,7 @@ app.post('/oauth', (req, res) => {
     // End of sending data to google calendar -------------------------------
 
     if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
-    else if (!FURTHERACTION) res.send('Scheduled!')
+    else if (FURTHERACTION) res.send('Scheduled!')
 
 // -----------------------------------------End of request Reminder Stuff -----------------------------
 // -----------------------------------------Beginning of request Meeting Stuff -----------------------------
@@ -601,7 +605,7 @@ app.post('/oauth', (req, res) => {
 
     let postMessage = {
        channel: SLACKBOTCHANNEL,
-       text: `${user[0].name} said they are unavailable for the meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}`
+       text: `${user[0].name} is unavailable for the meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}`
      }
 
      if (EVENTTOCREATE.attendees.length > 0) {
@@ -642,10 +646,12 @@ app.post('/oauth', (req, res) => {
    // When a confirmation gets a yes response
  } else if (payload.actions[0].name === 'invite_response' && payload.actions[0].value  === "true") {
 
+    let user = INVITEES.filter(item => item.id === payload.user.id);
+
      // Send note that user said yes
      web.chat.postMessage({
         channel: SLACKBOTCHANNEL,
-        text: `${user[0].name} said they are available for the meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}. Would you like to schedule the meeting now?`,
+        text: `${user[0].name} is available for the meeting at ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}. Would you like to schedule the meeting now?`,
         attachments : [
             {
                 "fallback": "You are unable to confirm",
@@ -674,25 +680,58 @@ app.post('/oauth', (req, res) => {
 
       res.send('Response Sent');
 
-  // For time conflicts
+  // For time conflicts - when time picked
   } else if (payload.actions[0].name === 'available_times' && payload.actions[0].selected_options[0].value) {
-
+    console.log('Picked time, beter place to console you genius')
+    console.log(payload.channel.id)
     // Set Event to new start and end time
     EVENTTOCREATE.start.dateTime = AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]
     let endTime = new Date(AVAILABLETIMES[parseInt(payload.actions[0].selected_options[0].value)]);
     endTime.setMinutes(endTime.getMinutes() + 30);
     EVENTTOCREATE.end.dateTime = endTime;
 
-    fs.readFile("credentials.json", (err, content) => {  // Load client secrets from a local file.
-      if (err) return console.log("Error loading client secret file:", err);
+    let postMessage = {
+       channel: payload.channel.id,
+       text: `The time for the event has been changed to ${new Date(EVENTTOCREATE.start.dateTime).toLocaleString()}. Please confirm`,
+       attachments : [
+           {
+               "fallback": "You are unable to confirm",
+               "callback_id": "wopr_game",
+               "color": "#3AA3E3",
+               "attachment_type": "default",
+               "actions": [
+                   {
+                       "name": "response",
+                       "text": "Yes",
+                       "type": "button",
+                       "value": "true",
+                       "style": "primary",
+                   },
+                   {
+                       "name": "response",
+                       "text": "No",
+                       "type": "button",
+                       "value": "false",
+                       "style": "danger",
+                   }
+               ]
+           }
+       ]
+     }
 
-      // Authorize a client with credentials, then call the Google Calendar API.
-      authorize(JSON.parse(content), createEvent);
+    // Add option to invite confirm with slack members if not a reminder
+    if (EVENTTOCREATE.attendees.length > 0) {
+      postMessage.attachments[0].actions.push({
+          "name": "response",
+          "text": "Ask Invitees for Confirmation",
+          "type": "button",
+          "value": "ask",
+      });
+    }
 
-    });
+    web.chat.postMessage(postMessage);
 
     if (ERROR) res.send('Sorry I could not set that meeting up, please try again');
-    else res.send('Meeting Scheduled');
 // -----------------------------------------End of request Meeting Stuff -----------------------------
 }  else { // If User does not confirm request
     console.log(payload.user)
