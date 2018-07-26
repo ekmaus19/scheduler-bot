@@ -49,7 +49,7 @@ let AVAILABLETIMES = [];
 let ERROR = false;
 let FURTHERACTION = false;
 let SLACKBOTCHANNEL = '';
-let INVITEEIDS = [];
+let INVITEES = [];
 
 // ------------------------------------ Slack Bot Functionality ----------------------------------
 rtm.start()
@@ -406,7 +406,7 @@ storage
   };
   console.log("request test ============", request)
 
-let _result;
+
   // Send request and log result
 return  sessionClient
     .detectIntent(request)
@@ -447,7 +447,7 @@ return  sessionClient
               summary: result.parameters.fields.subject.stringValue,
             }
           }
-        } else if(result.intent.displayName === 'meeting:add') {
+        } else if (result.intent.displayName === 'meeting:add') {
 
           // start and end times for meetings
           const startTime = new Date(result.parameters.fields.time.listValue.values[0].stringValue);
@@ -477,7 +477,12 @@ return  sessionClient
               return {'email': item[0].profile.email, 'displayName': item[0].profile.display_name}});
 
             // Collecting IDs incase confirmation is needed
-            INVITEEIDS = attPeople.map(item => item[0].id)
+            INVITEES = attPeople.map(item => {return {
+                  id: item[0].id,
+                  name: item[0].profile.display_name,
+                  email: item[0].profile.email
+                }
+              });
 
             return {
               /////// to be sent to check in with user
@@ -509,9 +514,11 @@ return  sessionClient
     });
 }
 
-// ---------------------------- Routes for communcation --------------------------------------------
+// __________________________________________ Routes for communcation __________________________________________
 app.post('/oauth', (req, res) => {
   const payload = JSON.parse(req.body.payload);
+
+// --------------------------- Reminder Request stuff---------------------------------------------------
 
   // If User Says to confirm event request
   if (payload.actions[0].name === 'response' && payload.actions[0].value === "true") {
@@ -531,23 +538,26 @@ app.post('/oauth', (req, res) => {
     if (ERROR) res.send('Sorry I could not schedule that, please try again in a moment');
     else if (!FURTHERACTION) res.send('Scheduled!')
 
+// -----------------------------------------End of request Reminder Stuff -----------------------------
+// -----------------------------------------Beginning of request Meeting Stuff -----------------------------
+
   // For When Confirming with invitees
   } else if (payload.actions[0].name === 'response' && payload.actions[0].value === "ask") {
 
     // Getting the channel id of invitees
-    axios('https://slack.com/api/im.list', {
+    return axios('https://slack.com/api/im.list', {
         'headers' :{
         'Content-type': 'application/json',
         'Authorization': 'Bearer '+process.env.SLACKBOT_TOKEN
       }
     })
     .then(response => {
-      let imIDs = INVITEEIDS.map(item => response.data.ims.filter(im => im.user === item));
+      let imIDs = INVITEES.map(item => response.data.ims.filter(im => im.user === item.id));
 
       // Send Message to each person
       imIDs.forEach(item => {
         web.chat.postMessage({
-           channel: message.channel,
+           channel: item[0].id,
            text: `You have been invited to a meeting at ${EVENTTOCREATE.start.dateTime}, Are you available?`,
            attachments: [
                {
@@ -576,12 +586,88 @@ app.post('/oauth', (req, res) => {
        });
      });
 
-    });
+     res.send('Invitations Sent');
+   })
+   .catch(err => console.log('There was an error with the invite confirmation message', err))
 
   // When a confirmation gets a no response
   } else if (payload.actions[0].name === 'invite_response' && payload.actions[0].value  === "false") {
 
-    console.log(payload.user);
+    // Remove user from attendees list
+    let user = INVITEES.filter(item => item.id === payload.user.id);
+    EVENTTOCREATE.attendees = EVENTTOCREATE.attendees.filter(item => item.email !== user.email)
+
+    // Send note that user said no
+
+    let postMessage = {
+       channel: SLACKBOTCHANNEL,
+       text: `${payload.user.name} said they are unavailable for the meeting`
+     }
+
+     if (INVITEES.attendees.length > 0) {
+
+       postMessage.text = postMessage.text + '.  Would you like to schedule the event now?'
+       postMessage.attachments = [
+           {
+               "fallback": "You are unable to confirm",
+               "callback_id": "wopr_game",
+               "color": "#3AA3E3",
+               "attachment_type": "default",
+               "actions": [
+                   {
+                       "name": "response",
+                       "text": "Yes",
+                       "type": "button",
+                       "value": "true",
+                       "style": "primary",
+                   },
+                   {
+                       "name": "response",
+                       "text": "No",
+                       "type": "button",
+                       "value": "false",
+                       "style": "danger",
+                   }
+               ]
+           }
+       ]
+     }
+
+     web.chat.postMessage(postMessage);
+
+   // When a confirmation gets a yes response
+ } else if (payload.actions[0].name === 'invite_response' && payload.actions[0].value  === "true") {
+
+     // Send note that user said yes
+     web.chat.postMessage({
+        channel: SLACKBOTCHANNEL,
+        text: `${payload.user.name} said they are available for the meeting. Would you like to schedule the meeting now?`,
+        attachments : [
+            {
+                "fallback": "You are unable to confirm",
+                "callback_id": "wopr_game",
+                "color": "#3AA3E3",
+                "attachment_type": "default",
+                "actions": [
+                    {
+                        "name": "response",
+                        "text": "Yes",
+                        "type": "button",
+                        "value": "true",
+                        "style": "primary",
+                    },
+                    {
+                        "name": "response",
+                        "text": "No",
+                        "type": "button",
+                        "value": "false",
+                        "style": "danger",
+                    }
+                ]
+            }
+        ]
+      });
+
   // For time conflicts
   } else if (payload.actions[0].name === 'available_times' && payload.actions[0].selected_options[0].value) {
 
@@ -601,9 +687,10 @@ app.post('/oauth', (req, res) => {
 
     if (ERROR) res.send('Sorry I could not set that meeting up, please try again');
     else res.send('Meeting Scheduled');
-
-  }  else {
-    res.send('Canceled')
+// -----------------------------------------End of request Meeting Stuff -----------------------------
+}  else { // If User does not confirm request
+    console.log(payload.user)
+    res.send('Canceled');
   }
 })
 
